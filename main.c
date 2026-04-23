@@ -95,7 +95,7 @@ void main(void)
 
     SineTable_Init(1.00f, 0.50f);
 //
-//    /* �������Ƶ��? */
+//    /* �������Ƶ��? */
 //    DDS_SetFrequency(DEFAULT_F_OUT);
     SPI_Init();
     //SCIB_Init();
@@ -221,7 +221,7 @@ interrupt void cpu_timer1_isr(void)
             ADC_dex = 0;
         }
     }
-    //���л������?
+    //���л������?
     else if(Sin_Finish_flag == 1)
     {
         for(i = 0; i < ADC_Fre; i++)
