@@ -1,0 +1,251 @@
+/*
+ * CLA_User.c
+ *
+ *  Created on: 2025年9月12日
+ *      Author: pc
+ */
+
+
+
+
+//#############################################################################
+//
+// FILE:   cla_ex5_adc_just_in_time_cla.cla
+//
+// TITLE:  Just-in-time ADC sampling with CLA
+//
+// Task 1 reads ADC result, do filtering and updates the duty of PWM output
+//
+//
+// Task 8 initializes the global variables used in CLA
+//
+//#############################################################################
+//
+//
+// $Copyright:
+// Copyright (C) 2025 Texas Instruments Incorporated - http://www.ti.com/
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+//   Redistributions of source code must retain the above copyright
+//   notice, this list of conditions and the following disclaimer.
+//
+//   Redistributions in binary form must reproduce the above copyright
+//   notice, this list of conditions and the following disclaimer in the
+//   documentation and/or other materials provided with the
+//   distribution.
+//
+//   Neither the name of Texas Instruments Incorporated nor the names of
+//   its contributors may be used to endorse or promote products derived
+//   from this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// $
+//#############################################################################
+
+//
+// Included Files
+//
+#include <stdint.h>
+#include "CLA_User.h"
+
+//
+// Globals
+//
+float duty ;  // duty of PWM output
+
+//#pragma DATA_SECTION(gCpuToCla, "CpuToCla1MsgRAM")
+#pragma DATA_SECTION(vol_lowpass, "Cla1ToCpuMsgRAM")
+//extern volatile struct { float x; uint16_t cmd; uint16_t seq; } gCpuToCla;
+//extern volatile struct { float y; uint16_t done; uint16_t seq; } gClaToCpu;
+volatile float vol_lowpass;
+
+#pragma DATA_SECTION(cur_lowpass, "Cla1ToCpuMsgRAM")
+volatile float cur_lowpass;
+#pragma DATA_SECTION(vol_lowpass_in, "Cla1ToCpuMsgRAM")
+volatile float vol_lowpass_in;
+//
+// Variables used to read ADC result and implement 3-point filter
+//
+float test_cla;
+uint16_t adc_val;
+uint16_t dac_val;
+uint16_t alpha_q15;
+uint16_t temp16;
+float data_read;
+#pragma CODE_SECTION(Cla_IIR1_Q15_withF32, "Cla1Prog")
+static inline int16_t Cla_IIR1_Q15_withF32(int16_t x_q15,
+float a_f32, // 0.0f..1.0f
+float *y_state_f) // 持久化状态（float）
+{
+    // Q15 -> float [-1,1)
+    float x = (float)x_q15 * (1.0f / 32768.0f);
+
+    // y = y + a*(x - y)
+    float y = *y_state_f + a_f32 * (x - *y_state_f);
+    *y_state_f = y;
+
+    // float -> Q15（带饱和）
+    float y_scaled = y * 32768.0f;
+    // 手动饱和避免库调用
+    if (y_scaled > 32767.0f)
+        y_scaled = 32767.0f;
+    if (y_scaled < -32768.0f)
+        y_scaled = -32768.0f;
+    return (int16_t)y_scaled;
+}
+//-----------------------------------------------------------------------------
+//
+// Task 1
+//
+// Description : Task 1 reads the ADC result just-in-time and implements a
+// 3-point moving average filter on it. The filtered output is used to compute
+// the duty value based on linear conversion in the range of 0.1-0.9
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt)) void Cla1Task1 ( void )
+{
+    //
+    // Setting Profiling GPIO2 : Takes 3 cycles
+    //
+    extern volatile float gCpuToCla;
+    //HWREG(GPIODATA_BASE  + GPIO_O_GPASET) = 4;
+
+    temp16 = HWREGH(ADCARESULT_BASE + ADC_RESULTx_OFFSET_BASE + ADC_SOC_NUMBER0);
+    temp16 = temp16 - 21;
+    //
+    // Uncomment this to debug the CLA while connected to the debugger
+    //
+    //__mdebugstop();
+//
+    //val_lowpass++;
+    test_cla = gCpuToCla;
+    Cla_IIR1_Q15_withF32(temp16, 0.002, &vol_lowpass);
+
+    temp16 = HWREGH(ADCARESULT_BASE + ADC_RESULTx_OFFSET_BASE + ADC_SOC_NUMBER1);
+    Cla_IIR1_Q15_withF32(temp16, 0.00010, &cur_lowpass);
+//    __meallow();
+    temp16 = HWREGH(ADCARESULT_BASE + ADC_RESULTx_OFFSET_BASE + ADC_SOC_NUMBER2);
+    temp16 = temp16;// - 13;// - 21;
+    Cla_IIR1_Q15_withF32(temp16, 0.005, &vol_lowpass_in);
+
+//
+//    //HWREGH(EPWM1_BASE + EPWM_O_CMPA + 0x1U) = (uint16_t)(duty * EPWM1_PERIOD + 0.5f);
+//    __medis();
+
+    //
+    // Resetting Profiling GPIO2
+    //
+    //HWREG(GPIODATA_BASE  + GPIO_O_GPACLEAR) = 4;
+}
+
+
+
+//-----------------------------------------------------------------------------
+//
+// Task 2 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task2 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 3 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task3 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 4 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task4 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 5 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task5 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 6 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task6 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 7 - Title Here
+//
+// Description: Description/steps here.
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task7 ( void )
+{
+
+}
+
+//-----------------------------------------------------------------------------
+//
+// Task 8 - One Time Initialization Task
+//
+// Description: This task initialize the CLA global variables used in Task 1
+//
+//-----------------------------------------------------------------------------
+__attribute__((interrupt))  void Cla1Task8 ( void )
+{
+
+    //
+    // Uncomment this to debug the CLA while connected to the debugger
+    //
+    //__mdebugstop();
+
+    //
+    // Initializing CLA global variables
+    //
+
+}
+
+//
+// End of File
+//
